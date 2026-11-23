@@ -289,3 +289,59 @@ def test_cli_invalid_payload_preserves_snapshot(tmp_path, planes, capsys):
         user_interaction(api, saver)
     assert "Ошибка:" in capsys.readouterr().out
     assert saver.path.read_bytes() == previous
+
+
+def test_speed_and_altitude_are_independent():
+    fast_low = Aeroplane("FAST", "Canada", 250, 500)
+    slow_high = Aeroplane("SLOW", "Canada", 100, 12000)
+    assert fast_low.compare_speed(slow_high) == 1
+    assert fast_low.compare_altitude(slow_high) == -1
+    assert slow_high.compare_speed(fast_low) == -1
+    assert slow_high.compare_altitude(fast_low) == 1
+    assert fast_low < slow_high
+    assert slow_high > fast_low
+
+
+def test_zero_and_unknown_measurements_are_distinct():
+    ground = Aeroplane("GROUND", "Canada", 0, 0, on_ground=True)
+    unknown = Aeroplane(None, "Canada", None, None)
+    below_sea_level = Aeroplane("LOW", "Canada", 50, -20)
+    assert get_top_aeroplanes([unknown, below_sea_level, ground], 3) == [ground, below_sea_level]
+    assert get_aeroplanes_by_altitude([unknown, ground], 0, 0) == [ground]
+    assert ground.to_dict()["velocity"] == 0
+    assert unknown.to_dict()["velocity"] is None
+    with pytest.raises(ValueError, match="отсутствует"):
+        ground.compare_altitude(unknown)
+
+
+def test_failed_file_replacement_preserves_previous_snapshot(tmp_path, planes):
+    saver = JSONSaver(tmp_path / "planes.json")
+    saver.replace_all(planes)
+    previous = saver.path.read_bytes()
+    with patch("pathlib.Path.replace", side_effect=PermissionError("denied")):
+        with pytest.raises(StorageError):
+            saver.replace_all([])
+    assert saver.path.read_bytes() == previous
+    assert len(saver.get_aeroplanes()) == 3
+
+
+def test_corrupt_storage_cannot_be_silently_modified(tmp_path, planes):
+    path = tmp_path / "planes.json"
+    path.write_text("broken", encoding="utf-8")
+    saver = JSONSaver(path)
+    for operation in (saver.add_aeroplane, saver.delete_aeroplane):
+        with pytest.raises(StorageError):
+            operation(planes[0])
+        assert path.read_text(encoding="utf-8") == "broken"
+
+
+def test_saved_snapshot_is_independent_of_console_filter(tmp_path, capsys):
+    api = Mock(spec=BaseAPI)
+    api.get_aeroplanes.return_value = states()
+    saver = JSONSaver(tmp_path / "planes.json")
+    with patch("builtins.input", side_effect=["Canada", "1", "United States", "0 2000"]):
+        user_interaction(api, saver)
+    output = capsys.readouterr().out
+    assert "LOW | United States" in output
+    assert "HIGH | Canada" not in output
+    assert {p.callsign for p in saver.get_aeroplanes()} == {"LOW", "HIGH"}
