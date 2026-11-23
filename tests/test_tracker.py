@@ -250,3 +250,42 @@ def test_cli_no_filter(tmp_path, capsys):
     with patch("builtins.input", side_effect=["Canada", "1", "Spain", ""]):
         user_interaction(api, JSONSaver(tmp_path / "planes.json"))
     assert "по выбранным условиям нет" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("data", [[], None, 42, {}, {"wrong_field": []}])
+def test_conversion_rejects_invalid_response(data):
+    with pytest.raises(ValueError, match="states"):
+        Aeroplane.cast_to_object_list(data)
+
+
+def test_oversized_measurement():
+    with pytest.raises(ValueError, match="слишком велико"):
+        Aeroplane("X", "Canada", 10**1000, 1)
+
+
+@pytest.mark.parametrize("box", [[False, True, False, True], [0, 10**1000, 0, 1], "0123"])
+def test_invalid_coordinate_types(box):
+    with patch.object(AeroplanesAPI, "_get", return_value=[{"boundingbox": box}]):
+        with pytest.raises(APIError, match="координаты"):
+            AeroplanesAPI().get_coordinates("Canada")
+
+
+def test_http_status_error():
+    result = response({"states": []})
+    result.raise_for_status.side_effect = requests.HTTPError("503 Service Unavailable")
+    with patch("src.api.requests.get", return_value=result):
+        with pytest.raises(APIError, match="503"):
+            AeroplanesAPI().get_coordinates("Canada")
+    result.json.assert_not_called()
+
+
+def test_cli_invalid_payload_preserves_snapshot(tmp_path, planes, capsys):
+    saver = JSONSaver(tmp_path / "planes.json")
+    saver.replace_all(planes)
+    previous = saver.path.read_bytes()
+    api = Mock(spec=BaseAPI)
+    api.get_aeroplanes.return_value = {"wrong_field": []}
+    with patch("builtins.input", return_value="Canada"):
+        user_interaction(api, saver)
+    assert "Ошибка:" in capsys.readouterr().out
+    assert saver.path.read_bytes() == previous

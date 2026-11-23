@@ -34,7 +34,13 @@ class Aeroplane:
     def _number(value: float | None, name: str, nonnegative: bool = False) -> float | None:
         if value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{name}: требуется конечное число или None")
+        try:
+            finite = isfinite(value)
+        except OverflowError as error:
+            raise ValueError(f"{name}: число слишком велико") from error
+        if not finite:
             raise ValueError(f"{name}: требуется конечное число или None")
         if nonnegative and value < 0:
             raise ValueError(f"{name} не может быть отрицательной")
@@ -94,7 +100,9 @@ class Aeroplane:
 
     @classmethod
     def cast_to_object_list(cls, data: dict) -> list["Aeroplane"]:
-        states = data.get("states")
+        if not isinstance(data, dict) or "states" not in data:
+            raise ValueError("Ответ OpenSky должен быть объектом с полем states")
+        states = data["states"]
         if states is None:
             return []
         if not isinstance(states, list):

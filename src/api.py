@@ -48,7 +48,10 @@ class AeroplanesAPI(BaseAPI):
         if data == []:
             raise APIError("Страна не найдена")
         try:
-            box = [float(value) for value in data[0]["boundingbox"]]
+            raw_box = data[0]["boundingbox"]
+            if not isinstance(raw_box, list) or any(isinstance(value, bool) for value in raw_box):
+                raise ValueError
+            box = [float(value) for value in raw_box]
             if (
                 len(box) != 4
                 or not all(isfinite(x) for x in box)
@@ -56,7 +59,7 @@ class AeroplanesAPI(BaseAPI):
                 or not -180 <= box[2] <= box[3] <= 180
             ):
                 raise ValueError
-        except (KeyError, TypeError, IndexError, ValueError) as error:
+        except (KeyError, TypeError, IndexError, ValueError, OverflowError) as error:
             raise APIError("Некорректные координаты страны") from error
         self._cache[key] = box
         return box.copy()
